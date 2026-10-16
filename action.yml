@@ -1,0 +1,27 @@
+name: Retrace
+description: Tracks every PR review comment across pushes and tells you which ones are fixed, partially fixed or still open. Powered by Jev.
+author: akbokha
+branding:
+  icon: repeat
+  color: purple
+
+inputs:
+  typesafe-api-key:
+    description: TypeSafe API key for Jev (or a key for any server that speaks POST /v1/systemone).
+    required: true
+  typesafe-base-url:
+    description: Optional base URL for a Jev-compatible server, e.g. a self-hosted Kev instance.
+    required: false
+  model:
+    description: Decision model to use.
+    default: jev-latest
+  min-confidence:
+    description: Below this confidence a thread is marked "unsure" instead of guessing.
+    default: "0.6"
+  github-token:
+    description: Token used to read review threads and post the summary comment.
+    default: ${{ github.token }}
+
+runs:
+  using: node24
+  main: dist/index.js

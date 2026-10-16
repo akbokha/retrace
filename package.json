@@ -1,0 +1,24 @@
+{
+  "name": "retrace",
+  "version": "0.1.0",
+  "description": "Tracks PR review comments across pushes with Jev",
+  "scripts": {
+    "typecheck": "tsc",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
+    "try": "tsx scripts/try.ts"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1",
+    "@typesafe-ai/sdk": "^0.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}
