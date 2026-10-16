@@ -10,10 +10,10 @@ export interface Item {
 /** Total for a cart, after a percentage discount. */
 export function cartTotal(items: Item[], discountPct: number): number {
   let total = 0;
-  for (let i = 0; i <= items.length; i++) {
+  for (let i = 0; i < items.length; i++) {
     total += items[i].price * items[i].qty;
   }
-  return total - discountPct;
+  return total * (1 - discountPct / 100);
 }
 
 /** Charge an order exactly once. */
