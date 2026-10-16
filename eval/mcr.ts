@@ -20,6 +20,8 @@ interface Defect {
 interface McrEvent {
   round_id: string;
   event_type: string;
+  author_role?: string;
+  body?: string;
   file_path?: string;
   line_start?: string;
   line_end?: string;
@@ -28,6 +30,8 @@ interface McrEvent {
 
 interface McrRow {
   task_id: string;
+  pr_title?: string;
+  pr_description?: string;
   events_up_to_round: McrEvent[];
   code_diff: { diff: string; commits: { sha: string; message: string }[] };
   ground_truth: { defects: Defect[] };
@@ -50,6 +54,12 @@ export interface Case {
   fullDiff: string;
   /** Messages of the commits pushed in this round. */
   commitMessages: string[];
+  prTitle: string;
+  prDescription: string;
+  /** This file's diffs from earlier pushes since the defect was raised (not including this push). */
+  earlierDiffs: string[];
+  /** Review/issue comments posted since the defect was raised, before this push (role: text). */
+  discussion: string[];
   /** Whether this round's diff changes lines near where the defect was in the previous round. */
   linesTouched: boolean;
 }
@@ -120,6 +130,8 @@ export function loadCases(dataDir: string, langs: readonly Lang[]): Case[] {
 
     for (const [pr, prRows] of byPr) {
       prRows.sort((a, b) => round(a) - round(b));
+      const raised = new Map<string, number>();
+      for (const r of prRows) for (const d of r.ground_truth.defects) if (!raised.has(d.defect_id)) raised.set(d.defect_id, round(r));
       for (let i = 1; i < prRows.length; i++) {
         const row = prRows[i];
         const prev = new Map(prRows[i - 1].ground_truth.defects.map((d) => [d.defect_id, d]));
@@ -148,6 +160,18 @@ export function loadCases(dataDir: string, langs: readonly Lang[]): Case[] {
             patch,
             fullDiff: row.code_diff.diff,
             commitMessages: (row.code_diff.commits ?? []).map((c) => c.message),
+            prTitle: row.pr_title ?? "",
+            prDescription: row.pr_description ?? "",
+            earlierDiffs: prRows
+              .slice(0, i)
+              .filter((r) => round(r) > (raised.get(d.defect_id) ?? round(row)))
+              .map((r) => splitDiff(r.code_diff.diff).get(file))
+              .filter((x): x is string => !!x),
+            discussion: row.events_up_to_round
+              .filter((e) => (e.event_type === "review_comment" || e.event_type === "issue_comment") && e.body?.trim())
+              .filter((e) => Number(e.round_id) >= (raised.get(d.defect_id) ?? 0))
+              .filter((e) => e.event_type === "issue_comment" || e.file_path === file)
+              .map((e) => `${e.author_role ?? "someone"}: ${e.body!.replace(/\s+/g, " ").slice(0, 300)}`),
             linesTouched: patch ? hunksOverlap(patch, range) : false,
           });
         }

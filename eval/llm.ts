@@ -21,6 +21,7 @@ const { values: args } = parseArgs({
     model: { type: "string", default: "claude-sonnet-5-5" },
     limit: { type: "string" },
     concurrency: { type: "string", default: "8" },
+    split: { type: "string", default: "test" },
   },
 });
 const model = args.model!;
@@ -62,7 +63,7 @@ function thinkingParams(): Pick<Anthropic.MessageCreateParams, "thinking" | "out
 interface LlmAnswer { id: string; pTouched: number; pAddressed: number; inTok: number; outTok: number; ms: number; stop: string }
 
 const isDev = (pr: string) => hash(pr) % 10 < 3; // same split as eval/run.ts and eval/variants.ts
-let test = loadCases(join(here, "data/MCR-bench/MCR-bench/dataset"), LANGS).filter((c) => !isDev(c.pr));
+let test = loadCases(join(here, "data/MCR-bench/MCR-bench/dataset"), LANGS).filter((c) => (args.split === "dev" ? isDev(c.pr) : !isDev(c.pr)));
 test.sort((a, b) => hash(`llm:${a.id}`) - hash(`llm:${b.id}`)); // deterministic sample for --limit
 if (args.limit) test = test.slice(0, Number(args.limit));
 
@@ -158,7 +159,7 @@ emit();
 emit(`This run: ${called.length} ${model} calls ≈ $${llmCost.toFixed(2)}. Latencies were measured at concurrency ${args.concurrency} from this machine; the Jev latencies come from the earlier full run.`);
 
 const report = out.join("\n");
-writeFileSync(join(RESULTS, `llm-${model}.md`), `${report}\n`);
+if (args.split === "test") writeFileSync(join(RESULTS, `llm-${model}.md`), `${report}\n`);
 console.log(report);
 
 // ---------- metrics ----------

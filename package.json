@@ -9,7 +9,8 @@
     "eval": "tsx --env-file-if-exists=.env eval/run.ts",
     "variants": "tsx --env-file-if-exists=.env eval/variants.ts",
     "llm": "tsx --env-file-if-exists=.env eval/llm.ts",
-    "v3": "tsx --env-file-if-exists=.env eval/v3.ts"
+    "v3": "tsx --env-file-if-exists=.env eval/v3.ts",
+    "v4": "tsx --env-file-if-exists=.env eval/v4.ts"
   },
   "license": "MIT",
   "type": "module",
