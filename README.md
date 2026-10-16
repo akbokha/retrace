@@ -111,15 +111,21 @@ It reports accuracy with PR-level bootstrap CIs, a breakdown by round and severi
 - **False-resolved rate:** still-open defects called fixed. This is the *forgetting* failure, and the dangerous one.
 - **Resolved recall:** real fixes recognised. Missing them means re-flagging fixed code, the *temporal misalignment* failure.
 
-Baselines so far (full report in [`eval/results/report.md`](eval/results/report.md)):
+Results on all 3,131 cases with `jev-latest` (full report in [`eval/results/report.md`](eval/results/report.md)):
 
-| System | Balanced acc. | Resolved recall | False-resolved rate |
-|---|---|---|---|
-| File touched ⇒ resolved | 60.2% | 82.5% | 62.0% |
-| Lines touched ⇒ resolved | 59.8% | 64.5% | 44.9% |
-| Retrace (Jev) | *pending: needs a Jev key* | | |
+| System | Balanced acc. | Resolved recall | Resolved precision | False-resolved rate (95% CI) |
+|---|---|---|---|---|
+| File touched ⇒ resolved | 60.2% | 82.5% | 77.1% | 62.0% (57.9–66.6%) |
+| Lines touched ⇒ resolved | 59.8% | 64.5% | 78.4% | 44.9% (41.4–49.0%) |
+| **Retrace (Jev)** | **70.2%** | 52.4% | **91.7%** | **12.0%** (9.8–14.6%) |
+| Retrace (Jev, no file filter) | 71.7% | 56.7% | 91.5% | 13.3% (10.8–15.9%) |
 
-The baselines already show something useful. **17.5% of real fixes land in a push that never touches the defect's file**, through refactors, code moving or fixes made elsewhere. So skipping Jev when the file is untouched has a measurable cost, and `--jev-all` measures what it costs to remove that shortcut.
+- **About 4–5× fewer "forgotten" defects** than the diff heuristics. When Retrace says ✅, it's right 92% of the time.
+- **No decay across rounds:** balanced accuracy stays at 70–71% from round 2 through round 5+. The ledger carries state, so later rounds aren't harder.
+- **Cheap:** 3,131 Jev calls for **$0.16 total**, median 205 ms per call. 23% of cases need no model call at all.
+- **Calibrated enough to use as a dial:** P(fixed) ≥ 0.8 is 94% actually resolved. A threshold tuned on a dev split of PRs gives a 6.1% false-resolved rate on held-out PRs, at 38% recall.
+- **The trade-off:** recall is modest. Jev says ❔ unsure on 18.5% of cases, and those default to "still open". That's the safe direction for a reviewer, and the obvious next thing to improve.
+- **17.5% of real fixes land in a push that never touches the defect's file.** Removing the file filter (`--jev-all`) recovers some of them (+4 points recall) for 30% more calls.
 
 ## Roadmap
 
