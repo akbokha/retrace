@@ -95,9 +95,36 @@ npm run typecheck
 npm run build   # bundles to dist/index.js. Commit dist/ (GitHub runs it directly).
 ```
 
+## Evaluation on MCR-bench
+
+[MCR-bench](https://github.com/DeepSoftwareAnalytics/MCR-bench) (Apache-2.0) has 558 real PRs with 2–10 review rounds. Each defect is labelled with its state in every round. Retrace's question maps directly onto it: *a defect was open going into this push; afterwards, is it **Resolved** or still **Open**?* That gives **3,131 cases** (71.6% resolved).
+
+```bash
+./eval/fetch-data.sh                               # ~60 MB, into eval/data/
+npm run eval                                       # baselines, no API key needed
+TYPESAFE_API_KEY=sk-... npm run eval -- --jev      # + Retrace (~2.4k Jev calls, cached)
+npm run eval -- --jev --jev-all                    # + variant without the file filter
+```
+
+It reports accuracy with PR-level bootstrap CIs, a breakdown by round and severity, Jev's cost and latency, calibration of P(fixed), and a threshold tuned on a dev split of PRs. The two numbers that matter:
+
+- **False-resolved rate:** still-open defects called fixed. This is the *forgetting* failure, and the dangerous one.
+- **Resolved recall:** real fixes recognised. Missing them means re-flagging fixed code, the *temporal misalignment* failure.
+
+Baselines so far (full report in [`eval/results/report.md`](eval/results/report.md)):
+
+| System | Balanced acc. | Resolved recall | False-resolved rate |
+|---|---|---|---|
+| File touched ⇒ resolved | 60.2% | 82.5% | 62.0% |
+| Lines touched ⇒ resolved | 59.8% | 64.5% | 44.9% |
+| Retrace (Jev) | *pending: needs a Jev key* | | |
+
+The baselines already show something useful. **17.5% of real fixes land in a push that never touches the defect's file**, through refactors, code moving or fixes made elsewhere. So skipping Jev when the file is untouched has a measurable cost, and `--jev-all` measures what it costs to remove that shortcut.
+
 ## Roadmap
 
-- [ ] Evaluation harness: replay MCR-Bench and plot per-round F1 against a stateless reviewer
+- [x] Evaluation harness on MCR-bench (state tracking)
+- [ ] Run Retrace through MCR-bench's own review-generation eval, paired with an LLM reviewer
 - [ ] Calibrated thresholds (conformal risk control) for a guaranteed recall target on "still open"
 - [ ] Classify developer replies ("done", "won't fix", disputes) and verify "done" claims
 - [ ] Deduplicate new bot comments against the ledger before posting

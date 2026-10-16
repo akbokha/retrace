@@ -7,6 +7,8 @@ export interface Assessment {
   pTouched: number;
   /** Jev's confidence in the status it picked. */
   confidence: number;
+  /** Jev's probability for each outcome. */
+  outcomeProbs: Record<keyof typeof QUESTIONS.outcome.criteria, number>;
   tokens: number;
 }
 
@@ -71,13 +73,13 @@ export class Judge {
 
     const tokens = usage.input_tokens ?? 0;
     const pTouched = answers.touched.noul;
-    const { choice, confidence } = answers.outcome;
+    const { choice, confidence, probabilities } = answers.outcome;
 
     let status: Status;
     if (pTouched < this.touchThreshold) status = "untouched";
     else if (confidence < this.minConfidence) status = "unsure";
     else status = choice;
 
-    return { status, pTouched, confidence, tokens };
+    return { status, pTouched, confidence, outcomeProbs: { ...probabilities }, tokens };
   }
 }

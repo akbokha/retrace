@@ -25624,12 +25624,12 @@ var Judge = class {
     });
     const tokens = usage.input_tokens ?? 0;
     const pTouched = answers.touched.noul;
-    const { choice, confidence } = answers.outcome;
+    const { choice, confidence, probabilities } = answers.outcome;
     let status;
     if (pTouched < this.touchThreshold) status = "untouched";
     else if (confidence < this.minConfidence) status = "unsure";
     else status = choice;
-    return { status, pTouched, confidence, tokens };
+    return { status, pTouched, confidence, outcomeProbs: { ...probabilities }, tokens };
   }
 };
 
