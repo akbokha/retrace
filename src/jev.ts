@@ -13,6 +13,8 @@ export interface Assessment {
   pAddressed: number;
   /** Jev's confidence in the outcome label used for threads that aren't fixed. */
   confidence: number;
+  /** Jev's label for a thread that isn't fixed. */
+  outcome: keyof typeof QUESTIONS.outcome.criteria;
   outcomeProbs: Record<keyof typeof QUESTIONS.outcome.criteria, number>;
   tokens: number;
 }
@@ -98,16 +100,23 @@ export class Judge {
   async assess(input: AssessInput): Promise<Assessment> {
     const { answers, usage } = await this.client.systemOne({ state: decisionState(input), questions: QUESTIONS });
 
-    const pTouched = answers.touched.noul;
-    const pAddressed = answers.addressed.noul;
     const { choice, confidence, probabilities } = answers.outcome;
+    const a = {
+      pTouched: answers.touched.noul,
+      pAddressed: answers.addressed.noul,
+      confidence,
+      outcome: choice,
+      outcomeProbs: { ...probabilities },
+      tokens: usage.input_tokens ?? 0,
+    };
+    return { ...a, status: this.statusFor(a, a.pAddressed >= this.fixedThreshold) };
+  }
 
-    let status: Status;
-    if (pAddressed >= this.fixedThreshold) status = "fixed";
-    else if (pTouched < this.touchThreshold) status = "untouched";
-    else if (confidence < this.minConfidence) status = "unsure";
-    else status = choice;
-
-    return { status, pTouched, pAddressed, confidence, outcomeProbs: { ...probabilities }, tokens: usage.input_tokens ?? 0 };
+  /** The thread's status, given whether it counts as fixed (by Jev alone, or by the cascade). */
+  statusFor(a: Omit<Assessment, "status">, fixed: boolean): Status {
+    if (fixed) return "fixed";
+    if (a.pTouched < this.touchThreshold) return "untouched";
+    if (a.confidence < this.minConfidence) return "unsure";
+    return a.outcome;
   }
 }

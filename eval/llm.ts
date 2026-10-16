@@ -8,10 +8,8 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { z } from "zod";
-import { decisionState, QUESTIONS, QUESTIONS_VERSION } from "../src/jev.js";
+import { decisionState, QUESTIONS_VERSION } from "../src/jev.js";
+import { Verifier } from "../src/verifier.js";
 import { type Case, LANGS, loadCases, splitDiff } from "./mcr.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -34,30 +32,6 @@ const PRICES: Record<string, [number, number]> = {
 };
 const JEV_PRICE = 0.042;
 
-// ---------- the question, worded as for Jev ----------
-
-const Answer = z.object({
-  touched_probability: z.number(),
-  addressed_probability: z.number(),
-});
-
-const SYSTEM =
-  "You track code review comments across the pushes of a pull request. You get a JSON state with a reviewer's " +
-  "comment (and the code it was left on) and a new push. Answer each question with a probability from 0 to 1 " +
-  "that the answer is yes. Make the probabilities calibrated: of all the times you say 0.8, about 80% should be yes.";
-
-const prompt = (state: object) =>
-  `<state>\n${JSON.stringify(state, null, 1)}\n</state>\n\n` +
-  `touched_probability: ${QUESTIONS.touched.instructions}\n\n` +
-  `addressed_probability: ${QUESTIONS.addressed.instructions}\n` +
-  `Yes means: ${QUESTIONS.addressed.criteria.true}\nNo means: ${QUESTIONS.addressed.criteria.false}`;
-
-// Lowest-latency setup for a quick yes/no check: no extended thinking on Sonnet 5.5, low effort elsewhere.
-function thinkingParams(): Pick<Anthropic.MessageCreateParams, "thinking" | "output_config"> {
-  if (model === "claude-sonnet-5-5") return { thinking: { type: "between_tools" } as Anthropic.MessageCreateParams["thinking"], output_config: { effort: "low" } };
-  return { output_config: { effort: "low" } };
-}
-
 // ---------- run ----------
 
 interface LlmAnswer { id: string; pTouched: number; pAddressed: number; inTok: number; outTok: number; ms: number; stop: string }
@@ -76,7 +50,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
   console.error("ANTHROPIC_API_KEY is not set. Add it to .env (see README).");
   process.exit(1);
 }
-const client = new Anthropic();
+const verifier = new Verifier(model);
 const todo = test.filter((c) => c.patch && !cache.has(c.id));
 console.error(`${model}: ${todo.length} calls (${cache.size} cached)`);
 
@@ -87,24 +61,15 @@ await Promise.all(Array.from({ length: Math.min(Number(args.concurrency), todo.l
     const t0 = Date.now();
     try {
       const state = decisionState({ path: c.file, reviewComment: c.reviewComment, codeWhenCommented: c.codeWhenCommented, pushFiles: splitDiff(c.fullDiff), commitMessages: c.commitMessages });
-      const res = await client.messages.parse({
-        model,
-        max_tokens: 4000,
-        system: SYSTEM,
-        messages: [{ role: "user", content: prompt(state) }],
-        output_config: { ...thinkingParams().output_config, format: zodOutputFormat(Answer) },
-        ...(thinkingParams().thinking ? { thinking: thinkingParams().thinking } : {}),
-      });
-      if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error(`no answer (stop_reason: ${res.stop_reason})`);
-      const clamp = (x: number) => Math.min(1, Math.max(0, x));
+      const v = await verifier.verify(state);
       const a: LlmAnswer = {
         id: c.id,
-        pTouched: clamp(res.parsed_output.touched_probability),
-        pAddressed: clamp(res.parsed_output.addressed_probability),
-        inTok: res.usage.input_tokens,
-        outTok: res.usage.output_tokens,
+        pTouched: v.pTouched,
+        pAddressed: v.pAddressed,
+        inTok: v.inputTokens,
+        outTok: v.outputTokens,
         ms: Date.now() - t0,
-        stop: res.stop_reason ?? "",
+        stop: "end_turn",
       };
       cache.set(c.id, a);
       appendFileSync(cachePath, `${JSON.stringify(a)}\n`);

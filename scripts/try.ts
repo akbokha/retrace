@@ -1,6 +1,10 @@
 // Try Jev on one hand-written example, no GitHub needed:
 //   TYPESAFE_API_KEY=sk-... npm run try
-import { Judge } from "../src/jev.js";
+import { decisionState, Judge } from "../src/jev.js";
+import { Verifier } from "../src/verifier.js";
+
+// Pass --verifier to also run the cascade's LLM check (needs ANTHROPIC_API_KEY).
+const verifier = process.argv.includes("--verifier") ? new Verifier("claude-sonnet-5-5") : undefined;
 
 const codeWhenCommented = `@@ -10,6 +10,12 @@ export async function chargeOrder(order: Order) {
 +  const existing = await payments.findByOrder(order.id);
@@ -54,15 +58,18 @@ const judge = new Judge(
 
 for (const [name, patch] of Object.entries(pushes)) {
   const t0 = Date.now();
-  const a = await judge.assess({
+  const input = {
     path: "src/payments.ts",
     reviewComment,
     codeWhenCommented,
     pushFiles: new Map([["src/payments.ts", patch]]),
     commitMessages: [],
-  });
+  };
+  const a = await judge.assess(input);
+  const v = verifier && a.pAddressed >= 0.74 ? await verifier.verify(decisionState(input)) : undefined;
   console.log(
     `${name.padEnd(36)} → ${a.status.padEnd(16)} addressed=${a.pAddressed.toFixed(2)} touched=${a.pTouched.toFixed(2)} ` +
-      `${a.tokens} tok ${Date.now() - t0}ms`,
+      `${a.tokens} tok ${Date.now() - t0}ms` +
+      (verifier ? (v ? ` | Sonnet addressed=${v.pAddressed.toFixed(2)} → ${v.pAddressed >= 0.89 ? "✅ confirmed" : "not confirmed"}` : " | Sonnet not asked (Jev < 0.74)") : ""),
   );
 }

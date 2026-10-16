@@ -37,6 +37,7 @@ push ──► for each open review thread:
                                      touched:   noul   "does this change modify the commented code?"
                                      outcome:   choice partially_fixed | not_addressed | made_worse
                                ──► low confidence? ──► ❔ unsure (never guesses)
+                               ──► optional: Jev ≥ 0.74 ⇒ an LLM must also agree before ✅
          ──► update one sticky PR comment (ledger stored inside it as hidden JSON, so no server or database)
 ```
 
@@ -75,8 +76,21 @@ That's it. Leave a review comment, push a commit, and watch the Retrace comment 
 | `model` | `jev-latest` | |
 | `fixed-threshold` | `0.76` | Jev's P(addressed) needed for ✅. `0.88` is stricter: ~6% false "fixed" on held-out MCR-bench PRs |
 | `min-confidence` | `0.6` | Below this, a thread is marked ❔ unsure |
+| `verifier-model` | off | Optional cascade, e.g. `claude-sonnet-5-5`: an LLM must confirm every ✅. Matches Sonnet's accuracy at ~60% of its cost ([results](#jev-vs-an-llm-and-the-cascade)) |
+| `anthropic-api-key` | | Needed for `verifier-model` |
+| `verifier-gate` / `verifier-threshold` | `0.74` / `0.89` | Jev's P(addressed) needed before asking the verifier, and the verifier's needed for ✅. Tuned on dev PRs for ≤5% false "fixed" |
 
-> Secrets aren't available to workflows triggered from forks, so Retrace only runs on PRs from branches in the same repo.
+With the cascade:
+
+```yaml
+      - uses: akbokha/retrace@v0
+        with:
+          typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          verifier-model: claude-sonnet-5-5
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+> Secrets aren't available to workflows triggered from forks. On those PRs Retrace skips with a notice instead of failing. After a force-push or rebase it leaves statuses unchanged until the next regular push, because the rewritten history can't be diffed against the previous head.
 
 ## Jev access
 
@@ -95,7 +109,8 @@ This runs Jev on one payment race-condition comment against three pushes: a full
 
 ```bash
 npm run typecheck
-npm run build   # bundles to dist/index.js. Commit dist/ (GitHub runs it directly).
+npm test
+npm run build   # bundles to dist/index.js. Commit dist/ (GitHub runs it directly; CI checks it's up to date).
 ```
 
 ## Evaluation on MCR-bench
@@ -107,6 +122,8 @@ npm run build   # bundles to dist/index.js. Commit dist/ (GitHub runs it directl
 npm run eval                                       # baselines, no API key needed
 TYPESAFE_API_KEY=sk-... npm run eval -- --jev      # + Retrace (~2.4k Jev calls, cached)
 npm run eval -- --jev --jev-all                    # + variant without the file filter
+npm run llm -- --split dev && npm run llm          # Claude Sonnet 5.5 on dev and held-out PRs (ANTHROPIC_API_KEY)
+npm run cascade                                    # Jev vs Sonnet vs cascade, thresholds tuned on dev
 ```
 
 It reports accuracy with PR-level bootstrap CIs, a breakdown by round and severity, Jev's cost and latency, calibration of P(addressed), and a threshold tuned on a dev split of PRs. The two numbers that matter:
@@ -142,28 +159,29 @@ The first version asked a 4-way choice about the commented file alone. A [spot c
 
 Rewording alone (v1) barely helped. The extra context is what made the difference. Reproduce with `npm run variants -- --variant v2 --split dev`.
 
-### Jev vs an LLM
+### Jev vs an LLM, and the cascade
 
-Same state and question, on the held-out PRs, against Claude Sonnet 5.5 (thinking off, the fastest way to deploy it for yes/no checks):
+Same state and question, against Claude Sonnet 5.5 (thinking off, the fastest way to deploy it for yes/no checks). Every threshold was tuned on the dev PRs and applied unchanged to the 2,190 held-out cases, targeting ≤5% false "fixed" ([`eval/results/cascade.md`](eval/results/cascade.md)):
 
-| | Jev | Claude Sonnet 5.5 |
-|---|---|---|
-| AUROC | 0.759 | 0.775 (+0.015, CI excludes 0) |
-| Recall @ ≤5% false-resolved | 37.3% | 37.8% |
-| Recall @ ≤12% false-resolved | 51.7% | 60.0% |
-| Cost per 1,000 checks | **$0.06** | $4.38 (~70×) |
-| Median latency | **215 ms** | 1,669 ms (~8×) |
+| | Recall | False-resolved | Precision of ✅ | Cost / 1k checks | Median latency |
+|---|---|---|---|---|---|
+| Jev alone | 41.9% | 6.3% | 94.2% | **$0.06** | **215 ms** |
+| Claude Sonnet 5.5 alone | 49.5% | 5.6% | 95.5% | $4.38 | 1,669 ms |
+| **Cascade: Jev filters, Sonnet confirms** | **49.7%** | 6.3% | 95.1% | **$2.68** | 215 ms for the 40% Jev filters out |
 
-Sonnet is modestly better at the looser operating point and tied at the strict one. Jev gets ~97% of its ranking quality for ~1.4% of the cost. Sending only Jev's uncertain cases to Sonnet recovers most of the gap for about half Sonnet's cost ([details](eval/results/findings.md#3-jev-vs-an-llm-claude-sonnet-55)).
+- **Sonnet is more accurate than Jev alone:** 6–9 points more recall at the same strict false-resolved rate (95% CI [5.9, 9.5]). Jev's advantage is cost (~70× cheaper) and latency (~8× faster), not accuracy.
+- **The cascade matches Sonnet's accuracy for ~40% less:** recall difference vs Sonnet alone [−1.0, +1.5] pts, false-resolved [−0.3, +1.6] pts. Jev handles the clear "not fixed" cases on its own, and Sonnet only sees the ~60% Jev finds likely addressed. Turn it on with `verifier-model` (below).
+
+An earlier version of this README said Jev and Sonnet were tied at the strict setting. That compared each at its best threshold *on the test data*, which flattered Jev. The dev-tuned comparison above is the correct one.
 
 ## Roadmap
 
 - [x] Evaluation harness on MCR-bench (state tracking)
 - [ ] Run Retrace through MCR-bench's own review-generation eval, paired with an LLM reviewer
 - [ ] Calibrated thresholds (conformal risk control) for a guaranteed recall target on "still open"
-- [ ] Classify developer replies ("done", "won't fix", disputes) and verify "done" claims
 - [ ] Deduplicate new bot comments against the ledger before posting
-- [ ] Cascade: escalate only Jev-uncertain threads to an LLM, with bands tuned on dev PRs
+- [x] Cascade: Jev filters, an LLM confirms ✅ (thresholds tuned on dev PRs)
+- [ ] Use thread replies ("done in abc123") as context. Not evaluated yet: MCR-bench doesn't link replies to threads
 
 ## License
 

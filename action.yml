@@ -7,8 +7,8 @@ branding:
 
 inputs:
   typesafe-api-key:
-    description: TypeSafe API key for Jev (or a key for any server that speaks POST /v1/systemone).
-    required: true
+    description: TypeSafe API key for Jev (or a key for any server that speaks POST /v1/systemone). If empty (e.g. PRs from forks), Retrace skips without failing.
+    required: false
   typesafe-base-url:
     description: Optional base URL for a Jev-compatible server, e.g. a self-hosted Kev instance.
     required: false
@@ -21,6 +21,18 @@ inputs:
   min-confidence:
     description: Below this confidence a thread is marked "unsure" instead of guessing.
     default: "0.6"
+  verifier-model:
+    description: Optional cascade. A Claude model (e.g. claude-sonnet-5-5) that must confirm every ✅. Only threads where Jev's P(addressed) ≥ verifier-gate are sent to it.
+    default: ""
+  anthropic-api-key:
+    description: Anthropic API key for verifier-model.
+    default: ""
+  verifier-gate:
+    description: Jev's P(addressed) needed before asking the verifier. Tuned with verifier-threshold on MCR-bench dev PRs for ≤5% false "fixed".
+    default: "0.74"
+  verifier-threshold:
+    description: Verifier's P(addressed) needed for ✅.
+    default: "0.89"
   github-token:
     description: Token used to read review threads and post the summary comment.
     default: ${{ github.token }}

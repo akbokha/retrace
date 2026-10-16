@@ -15,10 +15,11 @@ export interface Thread {
 }
 
 const THREADS_QUERY = `
-query($owner: String!, $repo: String!, $number: Int!) {
+query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path
           comments(first: 1) { nodes { author { login } body diffHunk url } }
@@ -32,6 +33,7 @@ interface ThreadsResponse {
   repository: {
     pullRequest: {
       reviewThreads: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
         nodes: {
           id: string;
           isResolved: boolean;
@@ -45,8 +47,15 @@ interface ThreadsResponse {
 }
 
 export async function listThreads(octokit: Octokit, owner: string, repo: string, number: number): Promise<Thread[]> {
-  const res = await octokit.graphql<ThreadsResponse>(THREADS_QUERY, { owner, repo, number });
-  return res.repository.pullRequest.reviewThreads.nodes.flatMap((t) => {
+  const nodes: ThreadsResponse["repository"]["pullRequest"]["reviewThreads"]["nodes"] = [];
+  let cursor: string | null = null;
+  do {
+    const res: ThreadsResponse = await octokit.graphql<ThreadsResponse>(THREADS_QUERY, { owner, repo, number, cursor });
+    const page = res.repository.pullRequest.reviewThreads;
+    nodes.push(...page.nodes);
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
+  return nodes.flatMap((t) => {
     const c = t.comments.nodes[0];
     if (!c) return [];
     return [{
@@ -62,11 +71,21 @@ export async function listThreads(octokit: Octokit, owner: string, repo: string,
   });
 }
 
-/** File path -> patch, and the commit messages, for the commits pushed between `before` and `after`. */
+/**
+ * File path -> patch, and the commit messages, for the commits pushed between `before` and `after`.
+ * Returns undefined when the push can't be diffed as "new commits on top": a force-push or rebase, or a
+ * `before` commit that no longer exists. Judging against a rewritten history would mislead, so we skip.
+ */
 export async function pushDiff(
   octokit: Octokit, owner: string, repo: string, before: string, after: string,
-): Promise<{ files: Map<string, string>; commitMessages: string[] }> {
-  const res = await octokit.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${before}...${after}` });
+): Promise<{ files: Map<string, string>; commitMessages: string[] } | undefined> {
+  let res;
+  try {
+    res = await octokit.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${before}...${after}` });
+  } catch {
+    return undefined;
+  }
+  if (res.data.status !== "ahead") return undefined;
   const files = new Map<string, string>();
   for (const f of res.data.files ?? []) {
     // Binary or huge files have no patch. Mark them changed so they still get looked at.
