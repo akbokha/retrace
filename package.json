@@ -5,8 +5,8 @@
   "scripts": {
     "typecheck": "tsc",
     "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
-    "try": "tsx scripts/try.ts",
-    "eval": "tsx eval/run.ts"
+    "try": "tsx --env-file-if-exists=.env scripts/try.ts",
+    "eval": "tsx --env-file-if-exists=.env eval/run.ts"
   },
   "license": "MIT",
   "type": "module",
