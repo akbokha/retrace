@@ -12,6 +12,8 @@ Retrace is a GitHub Action that keeps a ledger of every review thread on a pull 
 
 It doesn't write review comments itself. It works alongside whatever already writes them.
 
+**Short on time?** Read the one-page [TL;DR](TLDR.md), or see it working on the [live demo PR](https://github.com/akbokha/retrace/pull/1).
+
 ## Why
 
 AI code reviewers handle a single round reasonably well but degrade across rounds. [MCR-Bench](https://arxiv.org/abs/2608.27442) (2,269 real multi-round review tasks) reports F1 falling 10–30% from round 2 to round 10. The main causes:
