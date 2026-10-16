@@ -49,6 +49,12 @@ test("ledger survives a render/parse round trip, and 'Now' skips untouched round
   assert.match(body, /Missing \\\| discount/);
 });
 
+test("untouched threads show no confidence", () => {
+  const l: Ledger = { round: 1, threads: { T: { url: "u", path: "a.ts", author: "r", summary: "s", history: [{ round: 1, sha: "a", status: "untouched", confidence: 0.98 }] } } };
+  const body = renderComment(l, "abc", { checked: 1, skippedDeterministically: 0, jevCalls: 1, tokens: 0, ms: 1 });
+  assert.match(body, /⏸️ not touched \|/);
+});
+
 test("parseLedger tolerates a missing or corrupt ledger", () => {
   assert.deepEqual(parseLedger(undefined), { round: 0, threads: {} });
   assert.deepEqual(parseLedger("<!-- retrace:ledger !!!notbase64 -->"), { round: 0, threads: {} });

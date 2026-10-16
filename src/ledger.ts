@@ -61,7 +61,7 @@ export function renderComment(ledger: Ledger, sha: string, stats: RunStats): str
       // "Now" is the latest real judgment; rounds where the code wasn't touched don't change it.
       const last = [...e.history].reverse().find((h) => h.status !== "untouched") ?? e.history[e.history.length - 1];
       const trail = e.history.map((h) => DOT[h.status]).join(" → ");
-      const conf = last.confidence !== undefined ? ` (${Math.round(last.confidence * 100)}%)` : "";
+      const conf = last.confidence !== undefined && last.status !== "untouched" ? ` (${Math.round(last.confidence * 100)}%)` : "";
       return `| [${escape(e.summary)}](${e.url}) | \`${e.path}\` | ${BADGE[last.status]}${conf} | ${trail} |`;
     });
 

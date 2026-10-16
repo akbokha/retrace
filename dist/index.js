@@ -50454,7 +50454,7 @@ function renderComment(ledger, sha, stats) {
   const rows = Object.values(ledger.threads).filter((e) => e.history.length > 0).map((e) => {
     const last = [...e.history].reverse().find((h) => h.status !== "untouched") ?? e.history[e.history.length - 1];
     const trail = e.history.map((h) => DOT[h.status]).join(" \u2192 ");
-    const conf = last.confidence !== void 0 ? ` (${Math.round(last.confidence * 100)}%)` : "";
+    const conf = last.confidence !== void 0 && last.status !== "untouched" ? ` (${Math.round(last.confidence * 100)}%)` : "";
     return `| [${escape2(e.summary)}](${e.url}) | \`${e.path}\` | ${BADGE[last.status]}${conf} | ${trail} |`;
   });
   const table = rows.length ? ["| Review comment | File | Now | History by round |", "|---|---|---|---|", ...rows].join("\n") : "_No open review threads to track yet._";
@@ -71451,7 +71451,7 @@ async function run() {
         status = judge.statusFor(a, fixed);
         if (!fixed) confidence = a.confidence;
       }
-      entry.history.push({ round: ledger.round, sha: after, status, confidence });
+      entry.history.push({ round: ledger.round, sha: after, status, ...status === "untouched" ? {} : { confidence } });
       info(`${t.path}: ${status} (addressed p=${a.pAddressed.toFixed(2)}, touched p=${a.pTouched.toFixed(2)})`);
     } catch (err) {
       warning(`Jev call failed for ${t.url}: ${err.message}`);

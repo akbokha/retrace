@@ -109,7 +109,8 @@ async function run() {
         if (!fixed) confidence = a.confidence;
       }
 
-      entry.history.push({ round: ledger.round, sha: after, status, confidence });
+      // A confidence only means something for an actual judgment, not for "the code wasn't touched".
+      entry.history.push({ round: ledger.round, sha: after, status, ...(status === "untouched" ? {} : { confidence }) });
       core.info(`${t.path}: ${status} (addressed p=${a.pAddressed.toFixed(2)}, touched p=${a.pTouched.toFixed(2)})`);
     } catch (err) {
       core.warning(`Jev call failed for ${t.url}: ${(err as Error).message}`);
