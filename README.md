@@ -142,6 +142,20 @@ The first version asked a 4-way choice about the commented file alone. A [spot c
 
 Rewording alone (v1) barely helped. The extra context is what made the difference. Reproduce with `npm run variants -- --variant v2 --split dev`.
 
+### Jev vs an LLM
+
+Same state and question, on the held-out PRs, against Claude Sonnet 5.5 (thinking off, the fastest way to deploy it for yes/no checks):
+
+| | Jev | Claude Sonnet 5.5 |
+|---|---|---|
+| AUROC | 0.759 | 0.775 (+0.015, CI excludes 0) |
+| Recall @ ≤5% false-resolved | 37.3% | 37.8% |
+| Recall @ ≤12% false-resolved | 51.7% | 60.0% |
+| Cost per 1,000 checks | **$0.06** | $4.38 (~70×) |
+| Median latency | **215 ms** | 1,669 ms (~8×) |
+
+Sonnet is modestly better at the looser operating point and tied at the strict one. Jev gets ~97% of its ranking quality for ~1.4% of the cost. Sending only Jev's uncertain cases to Sonnet recovers most of the gap for about half Sonnet's cost ([details](eval/results/findings.md#3-jev-vs-an-llm-claude-sonnet-55)).
+
 ## Roadmap
 
 - [x] Evaluation harness on MCR-bench (state tracking)
@@ -149,7 +163,7 @@ Rewording alone (v1) barely helped. The extra context is what made the differenc
 - [ ] Calibrated thresholds (conformal risk control) for a guaranteed recall target on "still open"
 - [ ] Classify developer replies ("done", "won't fix", disputes) and verify "done" claims
 - [ ] Deduplicate new bot comments against the ledger before posting
-- [ ] Escalate only ⚠️/🟡/❔ threads to an LLM reviewer for targeted re-review
+- [ ] Cascade: escalate only Jev-uncertain threads to an LLM, with bands tuned on dev PRs
 
 ## License
 

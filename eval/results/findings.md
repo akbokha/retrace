@@ -49,3 +49,30 @@ v2 is now what the Action ships (`fixed-threshold` defaults to 0.76). Cost of th
 - Labels come from MCR-bench's LLM annotation pipeline. The spot check suggests a substantial share of "resolved" labels have no matching code change in that round.
 - 30 cases is a small sample. Treat the percentages in section 1 as rough.
 - The full-dataset numbers in `report.md` include the dev PRs used to pick v2. The held-out numbers above are the unbiased ones.
+
+## 3. Jev vs an LLM (Claude Sonnet 5.5)
+
+Same state, same question, on the 2,190 held-out cases (1,656 needing a model call). Sonnet ran with thinking off and low effort, the fastest way to deploy it for yes/no checks, and stated a probability in a structured answer. Jev returns real probabilities. `npm run llm` reproduces it; full table in [`llm-claude-sonnet-5-5.md`](llm-claude-sonnet-5-5.md).
+
+| | Jev | Sonnet 5.5 | Sonnet − Jev (95% CI, PR bootstrap) |
+|---|---|---|---|
+| AUROC | 0.759 | 0.775 | +0.015 [0.008, 0.024] |
+| Recall @ ≤5% false-resolved | 37.3% | 37.8% | about equal |
+| Recall @ ≤12% false-resolved | 51.7% | 60.0% | +8.3 pts [1.9, 11.3] |
+| Brier (calibration) | 0.165 | 0.168 | about equal |
+| **Cost per 1,000 checks** | **$0.06** | $4.38 | **~70× more** |
+| **Median / p95 latency** | **215 / 265 ms** | 1,669 / 2,975 ms | **~8× / 11× slower** |
+
+**Reading it:** Sonnet is measurably but modestly better at ranking, and the gap only shows at the looser operating point. At the strict setting (≤5% wrongly closed) they're tied. Jev gets ~97% of Sonnet's AUROC for ~1.4% of the cost at ~1/8 of the latency.
+
+**Cascade (exploratory):** let Jev decide when it's confident and send only its uncertain cases to Sonnet:
+
+| Send to Sonnet when Jev's P(addressed) is in | Share sent | Cost / 1k | AUROC | Recall @ ≤12% |
+|---|---|---|---|---|
+| never (Jev only) | 0% | $0.06 | 0.759 | 51.7% |
+| 0.3–0.9 | 51% | $2.31 | 0.771 | 59.6% |
+| always (Sonnet only) | 100% | $4.44 | 0.775 | 60.0% |
+
+Escalating half the checks recovers almost all of Sonnet's gain at the 12% operating point, for about half its cost. These bands were picked on the test split itself, so treat them as a direction to validate, not a result. At the strict 5% setting the cascade doesn't help.
+
+**Caveat:** both systems top out around AUROC 0.76–0.78. Given the label noise found in section 1, part of that ceiling is probably the labels, not the models.
