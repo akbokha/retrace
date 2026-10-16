@@ -30,7 +30,7 @@ export interface AssessInput {
 
 // Chosen on MCR-bench's dev split and confirmed on held-out PRs (see eval/). A yes/no "addressed?" question,
 // plus commit messages and the other files in the push, beat a single 4-way choice on the commented file alone.
-const QUESTIONS = {
+export const QUESTIONS = {
   touched: {
     type: "noul",
     instructions: "Does `new_change` modify the code that `review_comment` is about?",
@@ -58,6 +58,25 @@ const QUESTIONS = {
   },
 } as const;
 
+/** The state Retrace sends for one thread. Shared with eval/llm.ts so LLM baselines see exactly the same input. */
+export function decisionState(input: AssessInput) {
+  const anchors = anchorLines(input.codeWhenCommented);
+  const patch = input.pushFiles.get(input.path) ?? "";
+  return {
+    review_comment: {
+      file: input.path,
+      reviewer_comment: input.reviewComment,
+      code_when_commented: input.codeWhenCommented,
+    },
+    new_change: {
+      file: input.path,
+      diff: relevantHunks(patch, anchors, 4500),
+      commit_messages: input.commitMessages.map((m) => m.slice(0, 200)).slice(0, 8),
+      other_files_changed: otherFiles(input.pushFiles, input.path, anchors),
+    },
+  };
+}
+
 export class Judge {
   private client: TypeSafeClient;
 
@@ -77,24 +96,7 @@ export class Judge {
   }
 
   async assess(input: AssessInput): Promise<Assessment> {
-    const anchors = anchorLines(input.codeWhenCommented);
-    const patch = input.pushFiles.get(input.path) ?? "";
-    const { answers, usage } = await this.client.systemOne({
-      state: {
-        review_comment: {
-          file: input.path,
-          reviewer_comment: input.reviewComment,
-          code_when_commented: input.codeWhenCommented,
-        },
-        new_change: {
-          file: input.path,
-          diff: relevantHunks(patch, anchors, 4500),
-          commit_messages: input.commitMessages.map((m) => m.slice(0, 200)).slice(0, 8),
-          other_files_changed: otherFiles(input.pushFiles, input.path, anchors),
-        },
-      },
-      questions: QUESTIONS,
-    });
+    const { answers, usage } = await this.client.systemOne({ state: decisionState(input), questions: QUESTIONS });
 
     const pTouched = answers.touched.noul;
     const pAddressed = answers.addressed.noul;

@@ -7,7 +7,8 @@
     "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
     "try": "tsx --env-file-if-exists=.env scripts/try.ts",
     "eval": "tsx --env-file-if-exists=.env eval/run.ts",
-    "variants": "tsx --env-file-if-exists=.env eval/variants.ts"
+    "variants": "tsx --env-file-if-exists=.env eval/variants.ts",
+    "llm": "tsx --env-file-if-exists=.env eval/llm.ts"
   },
   "license": "MIT",
   "type": "module",
@@ -17,10 +18,12 @@
     "@typesafe-ai/sdk": "^0.7.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zod": "^4.6.7"
   },
   "private": true
 }
