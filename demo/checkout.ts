@@ -21,6 +21,11 @@ export async function chargeOrder(orderId: string, amount: number) {
   const existing = await db.payments.find(orderId);
   if (existing) return existing;
   const charge = await stripe.charges.create({ amount }, { idempotencyKey: `order-${orderId}` });
-  await db.payments.save(orderId, charge);
+  try {
+    await db.payments.save(orderId, charge); // unique index on order_id, see schema.sql
+  } catch {
+    // A concurrent request saved this order first; the idempotency key means Stripe charged only once.
+    return db.payments.find(orderId);
+  }
   return charge;
 }
