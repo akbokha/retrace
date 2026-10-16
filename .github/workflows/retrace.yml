@@ -22,3 +22,6 @@ jobs:
       - uses: ./
         with:
           typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          # Optional cascade: Claude must confirm every ✅ (see README).
+          verifier-model: claude-sonnet-5-5
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
