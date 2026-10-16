@@ -13,14 +13,14 @@ export function cartTotal(items: Item[], discountPct: number): number {
   for (let i = 0; i < items.length; i++) {
     total += items[i].price * items[i].qty;
   }
-  return total * (1 - discountPct / 100);
+  return Math.round(total * (1 - discountPct / 100) * 100) / 100;
 }
 
 /** Charge an order exactly once. */
 export async function chargeOrder(orderId: string, amount: number) {
   const existing = await db.payments.find(orderId);
   if (existing) return existing;
-  const charge = await stripe.charges.create({ amount });
+  const charge = await stripe.charges.create({ amount }, { idempotencyKey: `order-${orderId}` });
   await db.payments.save(orderId, charge);
   return charge;
 }
