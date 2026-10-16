@@ -33,3 +33,27 @@ export function relevantHunks(patch: string, anchors: string[], maxChars = 6000)
   }
   return out || patch.slice(0, maxChars);
 }
+
+/**
+ * Diffs of the other files in a push, most likely related first: files added with the same name (moves),
+ * then same name, then same folder. Gives Jev a chance to see fixes made somewhere other than the commented file.
+ */
+export function otherFiles(
+  files: Map<string, string>, path: string, anchors: string[], maxChars = 2500, maxFiles = 4,
+): { file: string; diff: string }[] {
+  const base = path.split("/").pop()!.replace(/\.\w+$/, "");
+  const dir = path.split("/").slice(0, -1).join("/");
+  const score = (f: string, patch: string) =>
+    (patch.startsWith("@@ -0,0 ") && f.includes(base) ? 4 : 0) + (f.includes(base) ? 2 : 0) + (f.startsWith(dir) ? 1 : 0);
+  const ranked = [...files].filter(([f]) => f !== path).sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]));
+
+  const out: { file: string; diff: string }[] = [];
+  let used = 0;
+  for (const [file, patch] of ranked) {
+    const diff = relevantHunks(patch, anchors, Math.min(1500, maxChars - used));
+    if (used + diff.length > maxChars || out.length >= maxFiles) break;
+    out.push({ file, diff });
+    used += diff.length;
+  }
+  return out;
+}

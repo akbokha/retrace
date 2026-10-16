@@ -1,6 +1,5 @@
 import * as core from "@actions/core";
 import { context, getOctokit } from "@actions/github";
-import { anchorLines, relevantHunks } from "./diff.js";
 import { findSticky, listThreads, pushDiff, upsertSticky } from "./github.js";
 import { Judge } from "./jev.js";
 import { parseLedger, renderComment, summarize, type RunStats } from "./ledger.js";
@@ -19,6 +18,7 @@ async function run() {
       baseURL: core.getInput("typesafe-base-url") || undefined,
       model: core.getInput("model") || "jev-latest",
     },
+    Number(core.getInput("fixed-threshold") || "0.76"),
     Number(core.getInput("min-confidence") || "0.6"),
   );
 
@@ -33,8 +33,8 @@ async function run() {
   const threads = (await listThreads(octokit, owner, repo, number)).filter((t) => !t.isResolved);
 
   // Only a new push ("synchronize") gives us a diff to judge against. Other events just record the threads.
-  const diff = context.payload.action === "synchronize" && before ? await pushDiff(octokit, owner, repo, before, after) : undefined;
-  if (!diff && threads.length === 0) {
+  const push = context.payload.action === "synchronize" && before ? await pushDiff(octokit, owner, repo, before, after) : undefined;
+  if (!push && threads.length === 0) {
     core.info("No open review threads and no new push yet.");
     return;
   }
@@ -46,7 +46,7 @@ async function run() {
     const entry = (ledger.threads[t.id] ??= {
       url: t.url, path: t.path, author: t.author, summary: summarize(t.body), history: [],
     });
-    const patch = diff?.get(t.path);
+    const patch = push?.files.get(t.path);
 
     // Deterministic first: if the push didn't touch this file, there is nothing for a model to judge.
     if (!patch) {
@@ -60,12 +60,14 @@ async function run() {
         path: t.path,
         reviewComment: t.body,
         codeWhenCommented: t.diffHunk,
-        newDiff: relevantHunks(patch, anchorLines(t.diffHunk)),
+        pushFiles: push!.files,
+        commitMessages: push!.commitMessages,
       });
       stats.jevCalls += 1;
       stats.tokens += a.tokens;
-      entry.history.push({ round: ledger.round, sha: after, status: a.status, confidence: a.confidence });
-      core.info(`${t.path}: ${a.status} (touched p=${a.pTouched.toFixed(2)}, conf=${a.confidence.toFixed(2)})`);
+      const confidence = a.status === "fixed" ? a.pAddressed : a.confidence;
+      entry.history.push({ round: ledger.round, sha: after, status: a.status, confidence });
+      core.info(`${t.path}: ${a.status} (addressed p=${a.pAddressed.toFixed(2)}, touched p=${a.pTouched.toFixed(2)})`);
     } catch (err) {
       core.warning(`Jev call failed for ${t.url}: ${(err as Error).message}`);
       entry.history.push({ round: ledger.round, sha: after, status: "unsure" });

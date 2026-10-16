@@ -24546,26 +24546,6 @@ function getOctokit(token, options, ...additionalPlugins) {
   return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 
-// src/diff.ts
-function splitHunks(patch) {
-  return patch.split(/^(?=@@ )/m).filter((h) => h.startsWith("@@"));
-}
-function anchorLines(diffHunk, count = 3) {
-  return diffHunk.split("\n").filter((l) => !l.startsWith("@@")).map((l) => l.slice(1).trim()).filter((l) => l.length > 2).slice(-count);
-}
-function relevantHunks(patch, anchors, maxChars = 6e3) {
-  const hunks = splitHunks(patch);
-  const touchesAnchor = (h) => h.split("\n").some((l) => (l.startsWith("-") || l.startsWith(" ")) && anchors.includes(l.slice(1).trim()));
-  const ordered = [...hunks.filter(touchesAnchor), ...hunks.filter((h) => !touchesAnchor(h))];
-  let out = "";
-  for (const h of ordered) {
-    if (out.length + h.length > maxChars) break;
-    out += h.endsWith("\n") ? h : `${h}
-`;
-  }
-  return out || patch.slice(0, maxChars);
-}
-
 // src/ledger.ts
 var MARKER = "<!-- retrace:sticky -->";
 var DATA_RE = /<!-- retrace:ledger ([A-Za-z0-9+/=]+) -->/;
@@ -24659,7 +24639,7 @@ async function pushDiff(octokit, owner, repo, before, after) {
     files.set(f.filename, f.patch ?? "(no textual diff available)");
     if (f.previous_filename) files.set(f.previous_filename, f.patch ?? "");
   }
-  return files;
+  return { files, commitMessages: res.data.commits.map((c) => c.commit.message) };
 }
 async function findSticky(octokit, owner, repo, number) {
   const comments = await octokit.paginate(octokit.rest.issues.listComments, { owner, repo, issue_number: number });
@@ -25579,25 +25559,69 @@ var parseBody = async (res) => {
   }
 };
 
+// src/diff.ts
+function splitHunks(patch) {
+  return patch.split(/^(?=@@ )/m).filter((h) => h.startsWith("@@"));
+}
+function anchorLines(diffHunk, count = 3) {
+  return diffHunk.split("\n").filter((l) => !l.startsWith("@@")).map((l) => l.slice(1).trim()).filter((l) => l.length > 2).slice(-count);
+}
+function relevantHunks(patch, anchors, maxChars = 6e3) {
+  const hunks = splitHunks(patch);
+  const touchesAnchor = (h) => h.split("\n").some((l) => (l.startsWith("-") || l.startsWith(" ")) && anchors.includes(l.slice(1).trim()));
+  const ordered = [...hunks.filter(touchesAnchor), ...hunks.filter((h) => !touchesAnchor(h))];
+  let out = "";
+  for (const h of ordered) {
+    if (out.length + h.length > maxChars) break;
+    out += h.endsWith("\n") ? h : `${h}
+`;
+  }
+  return out || patch.slice(0, maxChars);
+}
+function otherFiles(files, path, anchors, maxChars = 2500, maxFiles = 4) {
+  const base = path.split("/").pop().replace(/\.\w+$/, "");
+  const dir = path.split("/").slice(0, -1).join("/");
+  const score = (f, patch) => (patch.startsWith("@@ -0,0 ") && f.includes(base) ? 4 : 0) + (f.includes(base) ? 2 : 0) + (f.startsWith(dir) ? 1 : 0);
+  const ranked = [...files].filter(([f]) => f !== path).sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]));
+  const out = [];
+  let used = 0;
+  for (const [file, patch] of ranked) {
+    const diff = relevantHunks(patch, anchors, Math.min(1500, maxChars - used));
+    if (used + diff.length > maxChars || out.length >= maxFiles) break;
+    out.push({ file, diff });
+    used += diff.length;
+  }
+  return out;
+}
+
 // src/jev.ts
 var QUESTIONS = {
   touched: {
     type: "noul",
-    instructions: "Does `new_change.diff` modify the code that `review_comment` is about? That code is shown at the end of `review_comment.code_when_commented`."
+    instructions: "Does `new_change` modify the code that `review_comment` is about?"
   },
+  addressed: {
+    type: "noul",
+    instructions: "After `new_change` is applied, has the concern in `review_comment.reviewer_comment` been addressed? Count it as addressed if the change does what the reviewer asked, or handles the concern in another way the reviewer would accept, such as documenting the limitation or moving the code somewhere it is fixed.",
+    criteria: {
+      true: "The concern is addressed by this change.",
+      false: "The concern is still present after this change, or only a minor part of it was handled."
+    }
+  },
+  // Only used to label threads that aren't fixed.
   outcome: {
     type: "choice",
-    instructions: "After `new_change.diff` is applied, what happened to the problem described in `review_comment.reviewer_comment`?",
+    instructions: "If the concern in `review_comment.reviewer_comment` is not fully addressed by `new_change`, what is its state?",
     criteria: {
-      fixed: "The change fully resolves the problem the reviewer described.",
-      partially_fixed: "The change addresses part of the problem, but some of what the reviewer asked for is still missing.",
+      partially_fixed: "Part of what the reviewer asked for is done, but some of it is still missing.",
       not_addressed: "The change does not address the problem. It is still present.",
       made_worse: "The change makes the problem worse or introduces a closely related new problem."
     }
   }
 };
 var Judge = class {
-  constructor(opts, minConfidence, touchThreshold = 0.3) {
+  constructor(opts, fixedThreshold = 0.76, minConfidence = 0.6, touchThreshold = 0.3) {
+    this.fixedThreshold = fixedThreshold;
     this.minConfidence = minConfidence;
     this.touchThreshold = touchThreshold;
     this.client = new TypeSafeClient({
@@ -25607,10 +25631,13 @@ var Judge = class {
       ...opts.baseURL ? { baseURL: opts.baseURL } : {}
     });
   }
+  fixedThreshold;
   minConfidence;
   touchThreshold;
   client;
   async assess(input) {
+    const anchors = anchorLines(input.codeWhenCommented);
+    const patch = input.pushFiles.get(input.path) ?? "";
     const { answers, usage } = await this.client.systemOne({
       state: {
         review_comment: {
@@ -25618,18 +25645,24 @@ var Judge = class {
           reviewer_comment: input.reviewComment,
           code_when_commented: input.codeWhenCommented
         },
-        new_change: { file: input.path, diff: input.newDiff }
+        new_change: {
+          file: input.path,
+          diff: relevantHunks(patch, anchors, 4500),
+          commit_messages: input.commitMessages.map((m) => m.slice(0, 200)).slice(0, 8),
+          other_files_changed: otherFiles(input.pushFiles, input.path, anchors)
+        }
       },
       questions: QUESTIONS
     });
-    const tokens = usage.input_tokens ?? 0;
     const pTouched = answers.touched.noul;
+    const pAddressed = answers.addressed.noul;
     const { choice, confidence, probabilities } = answers.outcome;
     let status;
-    if (pTouched < this.touchThreshold) status = "untouched";
+    if (pAddressed >= this.fixedThreshold) status = "fixed";
+    else if (pTouched < this.touchThreshold) status = "untouched";
     else if (confidence < this.minConfidence) status = "unsure";
     else status = choice;
-    return { status, pTouched, confidence, outcomeProbs: { ...probabilities }, tokens };
+    return { status, pTouched, pAddressed, confidence, outcomeProbs: { ...probabilities }, tokens: usage.input_tokens ?? 0 };
   }
 };
 
@@ -25647,6 +25680,7 @@ async function run() {
       baseURL: getInput("typesafe-base-url") || void 0,
       model: getInput("model") || "jev-latest"
     },
+    Number(getInput("fixed-threshold") || "0.76"),
     Number(getInput("min-confidence") || "0.6")
   );
   const { owner, repo } = context2.repo;
@@ -25657,8 +25691,8 @@ async function run() {
   const sticky = await findSticky(octokit, owner, repo, number);
   const ledger = parseLedger(sticky?.body);
   const threads = (await listThreads(octokit, owner, repo, number)).filter((t) => !t.isResolved);
-  const diff = context2.payload.action === "synchronize" && before ? await pushDiff(octokit, owner, repo, before, after) : void 0;
-  if (!diff && threads.length === 0) {
+  const push = context2.payload.action === "synchronize" && before ? await pushDiff(octokit, owner, repo, before, after) : void 0;
+  if (!push && threads.length === 0) {
     info("No open review threads and no new push yet.");
     return;
   }
@@ -25672,7 +25706,7 @@ async function run() {
       summary: summarize(t.body),
       history: []
     };
-    const patch = diff?.get(t.path);
+    const patch = push?.files.get(t.path);
     if (!patch) {
       stats.skippedDeterministically += 1;
       entry.history.push({ round: ledger.round, sha: after, status: "untouched" });
@@ -25683,12 +25717,14 @@ async function run() {
         path: t.path,
         reviewComment: t.body,
         codeWhenCommented: t.diffHunk,
-        newDiff: relevantHunks(patch, anchorLines(t.diffHunk))
+        pushFiles: push.files,
+        commitMessages: push.commitMessages
       });
       stats.jevCalls += 1;
       stats.tokens += a.tokens;
-      entry.history.push({ round: ledger.round, sha: after, status: a.status, confidence: a.confidence });
-      info(`${t.path}: ${a.status} (touched p=${a.pTouched.toFixed(2)}, conf=${a.confidence.toFixed(2)})`);
+      const confidence = a.status === "fixed" ? a.pAddressed : a.confidence;
+      entry.history.push({ round: ledger.round, sha: after, status: a.status, confidence });
+      info(`${t.path}: ${a.status} (addressed p=${a.pAddressed.toFixed(2)}, touched p=${a.pTouched.toFixed(2)})`);
     } catch (err) {
       warning(`Jev call failed for ${t.url}: ${err.message}`);
       entry.history.push({ round: ledger.round, sha: after, status: "unsure" });

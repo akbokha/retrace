@@ -29,7 +29,7 @@ interface McrEvent {
 interface McrRow {
   task_id: string;
   events_up_to_round: McrEvent[];
-  code_diff: { diff: string };
+  code_diff: { diff: string; commits: { sha: string; message: string }[] };
   ground_truth: { defects: Defect[] };
 }
 
@@ -48,6 +48,8 @@ export interface Case {
   patch: string | undefined;
   /** This round's whole diff, for asking Jev even when the defect's file wasn't touched. */
   fullDiff: string;
+  /** Messages of the commits pushed in this round. */
+  commitMessages: string[];
   /** Whether this round's diff changes lines near where the defect was in the previous round. */
   linesTouched: boolean;
 }
@@ -145,6 +147,7 @@ export function loadCases(dataDir: string, langs: readonly Lang[]): Case[] {
             codeWhenCommented: codeContext(file, range, row.events_up_to_round, prRows.slice(0, i)),
             patch,
             fullDiff: row.code_diff.diff,
+            commitMessages: (row.code_diff.commits ?? []).map((c) => c.message),
             linesTouched: patch ? hunksOverlap(patch, range) : false,
           });
         }

@@ -30,10 +30,12 @@ push ──► for each open review thread:
            │
            ├─ file not in this push?  ──► ⏸️ untouched (plain code, no model call)
            │
-           └─ file changed ──► pick only the hunks near the commented lines
-                               ──► Jev (one call, two typed questions):
-                                     touched:  noul   "does this diff modify the commented code?"
-                                     outcome:  choice fixed | partially_fixed | not_addressed | made_worse
+           └─ file changed ──► small state: hunks near the commented lines + commit messages
+                                              + up to 4 related files (moves, same name/folder)
+                               ──► Jev (one call, three typed questions):
+                                     addressed: noul   "has the reviewer's concern been addressed?"  ≥ 0.76 ⇒ ✅
+                                     touched:   noul   "does this change modify the commented code?"
+                                     outcome:   choice partially_fixed | not_addressed | made_worse
                                ──► low confidence? ──► ❔ unsure (never guesses)
          ──► update one sticky PR comment (ledger stored inside it as hidden JSON, so no server or database)
 ```
@@ -71,6 +73,7 @@ That's it. Leave a review comment, push a commit, and watch the Retrace comment 
 | `typesafe-api-key` | required | Jev key, or a key for any Jev-compatible server |
 | `typesafe-base-url` | Jev's API | Point at a self-hosted [Kev](https://github.com/jaredpalmer/kev) server so code never leaves your infra |
 | `model` | `jev-latest` | |
+| `fixed-threshold` | `0.76` | Jev's P(addressed) needed for ✅. `0.88` is stricter: ~6% false "fixed" on held-out MCR-bench PRs |
 | `min-confidence` | `0.6` | Below this, a thread is marked ❔ unsure |
 
 > Secrets aren't available to workflows triggered from forks, so Retrace only runs on PRs from branches in the same repo.
@@ -106,7 +109,7 @@ TYPESAFE_API_KEY=sk-... npm run eval -- --jev      # + Retrace (~2.4k Jev calls,
 npm run eval -- --jev --jev-all                    # + variant without the file filter
 ```
 
-It reports accuracy with PR-level bootstrap CIs, a breakdown by round and severity, Jev's cost and latency, calibration of P(fixed), and a threshold tuned on a dev split of PRs. The two numbers that matter:
+It reports accuracy with PR-level bootstrap CIs, a breakdown by round and severity, Jev's cost and latency, calibration of P(addressed), and a threshold tuned on a dev split of PRs. The two numbers that matter:
 
 - **False-resolved rate:** still-open defects called fixed. This is the *forgetting* failure, and the dangerous one.
 - **Resolved recall:** real fixes recognised. Missing them means re-flagging fixed code, the *temporal misalignment* failure.
@@ -117,15 +120,27 @@ Results on all 3,131 cases with `jev-latest` (full report in [`eval/results/repo
 |---|---|---|---|---|
 | File touched ⇒ resolved | 60.2% | 82.5% | 77.1% | 62.0% (57.9–66.6%) |
 | Lines touched ⇒ resolved | 59.8% | 64.5% | 78.4% | 44.9% (41.4–49.0%) |
-| **Retrace (Jev)** | **70.2%** | 52.4% | **91.7%** | **12.0%** (9.8–14.6%) |
-| Retrace (Jev, no file filter) | 71.7% | 56.7% | 91.5% | 13.3% (10.8–15.9%) |
+| Retrace v0 (4-way choice, commented file only) | 70.2% | 52.4% | 91.7% | 12.0% (9.8–14.6%) |
+| **Retrace (shipped)** | **71.6%** | **56.9%** | **91.3%** | **13.6%** (11.2–16.0%) |
+| Retrace (shipped, no file filter) | 73.1% | 61.0% | 91.2% | 14.9% (12.1–17.5%) |
 
-- **About 4–5× fewer "forgotten" defects** than the diff heuristics. When Retrace says ✅, it's right 92% of the time.
-- **No decay across rounds:** balanced accuracy stays at 70–71% from round 2 through round 5+. The ledger carries state, so later rounds aren't harder.
-- **Cheap:** 3,131 Jev calls for **$0.16 total**, median 205 ms per call. 23% of cases need no model call at all.
-- **Calibrated enough to use as a dial:** P(fixed) ≥ 0.8 is 94% actually resolved. A threshold tuned on a dev split of PRs gives a 6.1% false-resolved rate on held-out PRs, at 38% recall.
-- **The trade-off:** recall is modest. Jev says ❔ unsure on 18.5% of cases, and those default to "still open". That's the safe direction for a reviewer, and the obvious next thing to improve.
-- **17.5% of real fixes land in a push that never touches the defect's file.** Removing the file filter (`--jev-all`) recovers some of them (+4 points recall) for 30% more calls.
+- **About 4× fewer "forgotten" defects** than the diff heuristics. When Retrace says ✅, it's right 91% of the time.
+- **No decay across rounds:** balanced accuracy stays between 70% and 73% from round 2 through round 5+. The ledger carries state, so later rounds aren't harder.
+- **Cheap:** 3,131 Jev calls for **$0.19 total**, median 214 ms per call. 23% of cases need no model call at all.
+- **Calibrated, so the threshold is a usable dial:** P(addressed) ≥ 0.8 is 92% actually resolved (Brier 0.162). `fixed-threshold: 0.88`, tuned on dev PRs, gives about 6% false-resolved on held-out PRs at 42% recall.
+- **The trade-off:** recall is modest, and ❔ unsure threads (12%) default to "still open", the safe direction. A hand-checked sample suggests [roughly 40% of the apparent misses are label noise](eval/results/findings.md) (no fix exists in that push), so true recall is higher than measured.
+- **17.5% of real fixes land in a push that never touches the defect's file.** Removing the file filter (`--jev-all`) recovers part of that (+4 points recall) for 30% more calls.
+
+### How the shipped questions were chosen
+
+The first version asked a 4-way choice about the commented file alone. A [spot check of its misses](eval/results/findings.md) found two fixable causes: fixes made in *other* files (moves, extracted base classes), and a question that leaned toward "partially fixed". Three variants were compared on a 30% dev split of PRs, and the winner was confirmed once on the 70% held-out split:
+
+| Held-out PRs (2,190 cases) | Recall | False-resolved | Balanced acc. |
+|---|---|---|---|
+| v0: 4-way choice, commented file | 51.9% | 12.1% | 69.9% |
+| **v2: yes/no "addressed?" + commit messages + other changed files** | **56.1%** | 13.9% | **71.1%** |
+
+Rewording alone (v1) barely helped. The extra context is what made the difference. Reproduce with `npm run variants -- --variant v2 --split dev`.
 
 ## Roadmap
 

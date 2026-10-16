@@ -62,10 +62,10 @@ export async function listThreads(octokit: Octokit, owner: string, repo: string,
   });
 }
 
-/** Map of file path -> patch for the commits pushed between `before` and `after`. */
+/** File path -> patch, and the commit messages, for the commits pushed between `before` and `after`. */
 export async function pushDiff(
   octokit: Octokit, owner: string, repo: string, before: string, after: string,
-): Promise<Map<string, string>> {
+): Promise<{ files: Map<string, string>; commitMessages: string[] }> {
   const res = await octokit.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${before}...${after}` });
   const files = new Map<string, string>();
   for (const f of res.data.files ?? []) {
@@ -73,7 +73,7 @@ export async function pushDiff(
     files.set(f.filename, f.patch ?? "(no textual diff available)");
     if (f.previous_filename) files.set(f.previous_filename, f.patch ?? "");
   }
-  return files;
+  return { files, commitMessages: res.data.commits.map((c) => c.commit.message) };
 }
 
 export async function findSticky(octokit: Octokit, owner: string, repo: string, number: number) {

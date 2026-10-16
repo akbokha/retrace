@@ -10,9 +10,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { anchorLines, relevantHunks } from "../src/diff.js";
-import { Judge } from "../src/jev.js";
-import { type Case, LANGS, type Lang, loadCases } from "./mcr.js";
+import { Judge, QUESTIONS_VERSION } from "../src/jev.js";
+import { type Case, LANGS, type Lang, loadCases, splitDiff } from "./mcr.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DATA = join(here, "data/MCR-bench/MCR-bench/dataset");
@@ -35,7 +34,7 @@ interface Pred { resolved: boolean; p?: number; abstained?: boolean }
 type System = { name: string; note: string; predict: (c: Case) => Pred };
 
 interface JevAnswer {
-  id: string; status: string; pTouched: number; confidence: number;
+  id: string; status: string; pTouched: number; pAddressed: number; confidence: number;
   outcomeProbs: Record<string, number>; tokens: number; ms: number;
 }
 
@@ -53,7 +52,7 @@ if (args.limit) cases = cases.slice(0, Number(args.limit));
 // ---------- Jev (cached) ----------
 
 mkdirSync(RESULTS, { recursive: true });
-const cachePath = join(RESULTS, `jev-${args.model}.jsonl`);
+const cachePath = join(RESULTS, `jev-${args.model}-${QUESTIONS_VERSION}.jsonl`);
 const cache = new Map<string, JevAnswer>(
   existsSync(cachePath)
     ? readFileSync(cachePath, "utf8").split("\n").filter(Boolean).map((l) => { const a = JSON.parse(l) as JevAnswer; return [a.id, a]; })
@@ -61,24 +60,26 @@ const cache = new Map<string, JevAnswer>(
 );
 
 if (args.jev) {
-  const judge = new Judge({ apiKey: process.env.TYPESAFE_API_KEY ?? "", baseURL: process.env.TYPESAFE_BASE_URL, model: args.model! }, 0.6);
+  const judge = new Judge({ apiKey: process.env.TYPESAFE_API_KEY ?? "", baseURL: process.env.TYPESAFE_BASE_URL, model: args.model! });
   // Retrace only calls Jev when the push touched the file. --jev-all also asks about the rest, with the whole push diff.
   const todo = [
-    ...cases.filter((c) => c.patch && !cache.has(c.id)).map((c) => ({ c, key: c.id, diff: c.patch! })),
-    ...(args["jev-all"] ? cases.filter((c) => !c.patch && !cache.has(`${c.id}:full`)).map((c) => ({ c, key: `${c.id}:full`, diff: c.fullDiff })) : []),
+    ...cases.filter((c) => c.patch && !cache.has(c.id)).map((c) => ({ c, key: c.id })),
+    ...(args["jev-all"] ? cases.filter((c) => !c.patch && !cache.has(`${c.id}:full`)).map((c) => ({ c, key: `${c.id}:full` })) : []),
   ];
   console.error(`Jev: ${todo.length} calls to make (${cache.size} cached)`);
   let done = 0, failed = 0;
-  await pool(todo, Number(args.concurrency), async ({ c, key, diff }) => {
+  await pool(todo, Number(args.concurrency), async ({ c, key }) => {
     const t0 = Date.now();
     try {
       const a = await judge.assess({
         path: c.file,
         reviewComment: c.reviewComment,
         codeWhenCommented: c.codeWhenCommented,
-        newDiff: relevantHunks(diff, anchorLines(c.codeWhenCommented)),
+        // With --jev-all the defect's file may be absent from the push; Jev then only sees the other files.
+        pushFiles: splitDiff(c.fullDiff),
+        commitMessages: c.commitMessages,
       });
-      const ans: JevAnswer = { id: key, status: a.status, pTouched: a.pTouched, confidence: a.confidence, outcomeProbs: a.outcomeProbs, tokens: a.tokens, ms: Date.now() - t0 };
+      const ans: JevAnswer = { id: key, status: a.status, pTouched: a.pTouched, pAddressed: a.pAddressed, confidence: a.confidence, outcomeProbs: a.outcomeProbs, tokens: a.tokens, ms: Date.now() - t0 };
       cache.set(key, ans);
       appendFileSync(cachePath, `${JSON.stringify(ans)}\n`);
     } catch (err) {
@@ -105,10 +106,9 @@ if (cache.size > 0) {
     if (!c.patch) return { resolved: false, p: 0 }; // deterministic skip: file untouched => still open
     const a = cache.get(c.id);
     if (!a) return { resolved: false, abstained: true };
-    const pFixed = a.pTouched * (a.outcomeProbs.fixed ?? 0);
-    return { resolved: a.status === "fixed", p: pFixed, abstained: a.status === "unsure" };
+    return { resolved: a.status === "fixed", p: a.pAddressed, abstained: a.status === "unsure" };
   };
-  systems.push({ name: "Retrace (Jev)", note: "File filter + Jev; only `fixed` counts as resolved, `unsure` stays open.", predict: retrace });
+  systems.push({ name: "Retrace (Jev)", note: "File filter + Jev; ✅ when P(addressed) ≥ 0.76, everything else stays open.", predict: retrace });
 
   if ([...cache.keys()].some((k) => k.endsWith(":full"))) {
     systems.push({
@@ -118,7 +118,7 @@ if (cache.size > 0) {
         if (c.patch) return retrace(c);
         const a = cache.get(`${c.id}:full`);
         if (!a) return { resolved: false, abstained: true };
-        return { resolved: a.status === "fixed", p: a.pTouched * (a.outcomeProbs.fixed ?? 0), abstained: a.status === "unsure" };
+        return { resolved: a.status === "fixed", p: a.pAddressed, abstained: a.status === "unsure" };
       },
     });
   }
@@ -232,9 +232,9 @@ if (cache.size > 0) {
 
   // Calibration: are Jev's probabilities honest? This is what makes threshold tuning (and later, risk control) possible.
   emit();
-  emit("## Calibration of P(fixed)");
+  emit("## Calibration of P(addressed)");
   emit();
-  emit("| P(fixed) bin | Cases | Actually resolved |");
+  emit("| P(addressed) bin | Cases | Actually resolved |");
   emit("|---|---|---|");
   const preds = allPreds.get("Retrace (Jev)")!;
   const scored = cases.filter((c) => preds.get(c.id)!.p !== undefined && c.patch);

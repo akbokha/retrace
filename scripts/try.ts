@@ -1,6 +1,5 @@
 // Try Jev on one hand-written example, no GitHub needed:
 //   TYPESAFE_API_KEY=sk-... npm run try
-import { anchorLines, relevantHunks } from "../src/diff.js";
 import { Judge } from "../src/jev.js";
 
 const codeWhenCommented = `@@ -10,6 +10,12 @@ export async function chargeOrder(order: Order) {
@@ -51,7 +50,6 @@ const judge = new Judge(
     baseURL: process.env.TYPESAFE_BASE_URL,
     model: process.env.TYPESAFE_DEFAULT_MODEL ?? "jev-latest",
   },
-  0.6,
 );
 
 for (const [name, patch] of Object.entries(pushes)) {
@@ -60,10 +58,11 @@ for (const [name, patch] of Object.entries(pushes)) {
     path: "src/payments.ts",
     reviewComment,
     codeWhenCommented,
-    newDiff: relevantHunks(patch, anchorLines(codeWhenCommented)),
+    pushFiles: new Map([["src/payments.ts", patch]]),
+    commitMessages: [],
   });
   console.log(
-    `${name.padEnd(36)} → ${a.status.padEnd(16)} touched=${a.pTouched.toFixed(2)} conf=${a.confidence.toFixed(2)} ` +
+    `${name.padEnd(36)} → ${a.status.padEnd(16)} addressed=${a.pAddressed.toFixed(2)} touched=${a.pTouched.toFixed(2)} ` +
       `${a.tokens} tok ${Date.now() - t0}ms`,
   );
 }

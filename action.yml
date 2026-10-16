@@ -15,6 +15,9 @@ inputs:
   model:
     description: Decision model to use.
     default: jev-latest
+  fixed-threshold:
+    description: Jev's P(addressed) needed to mark a thread ✅. 0.76 gave ~14% false "fixed" on held-out MCR-bench PRs; 0.88 gave ~6%.
+    default: "0.76"
   min-confidence:
     description: Below this confidence a thread is marked "unsure" instead of guessing.
     default: "0.6"
