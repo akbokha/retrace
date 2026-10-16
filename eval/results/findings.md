@@ -76,3 +76,22 @@ Same state, same question, on the 2,190 held-out cases (1,656 needing a model ca
 Escalating half the checks recovers almost all of Sonnet's gain at the 12% operating point, for about half its cost. These bands were picked on the test split itself, so treat them as a direction to validate, not a result. At the strict 5% setting the cascade doesn't help.
 
 **Caveat:** both systems top out around AUROC 0.76–0.78. Given the label noise found in section 1, part of that ceiling is probably the labels, not the models.
+
+## 4. v3: several narrow Jev questions + a learned combiner
+
+Goal: more confidence that a ✅ thread is really resolved. v3 asks seven narrow questions in one Jev call (addressed, touched, *problem still present*, *specific suggestion applied*, *only partially done*, commits mention review, fixed in another file). A logistic regression trained on the dev PRs combines them with cheap facts the Action has (commented lines touched, file deleted, review words in commits, round). Seven questions cost about the same as two, because Jev bills the shared input once. `npm run v3 -- --split dev`, then `--split test`. Full table in [`v3.md`](v3.md).
+
+Dev, cross-validated: recall at ≤5% false-resolved went from 44.7% (v2) to 49.5% (v3). On held-out PRs:
+
+| | Jev v2 | Claude Sonnet 5.5 | Jev v3 |
+|---|---|---|---|
+| AUROC | 0.759 | 0.775 | 0.768 |
+| Recall @ ≤5% false-resolved | 37.3% | 37.8% | 38.7% |
+| Recall @ ≤2% false-resolved | 22.4% | 30.3% | 30.2% |
+| Cost per 1,000 checks | $0.06 | $4.38 | $0.06 |
+
+PR-bootstrap 95% CIs for v3 − v2 and v3 − Sonnet at both strict settings all include zero (e.g. v3 − Sonnet @ 2%: [−8.1, +13.9] pts). So **v3 matches Sonnet at the strict settings at 1/70th of the cost, but doesn't measurably beat it, or v2**. At these error budgets only a few hundred cases decide the result, so the comparison is noisy.
+
+The threshold chosen on dev (0.87, aiming for 5% false-resolved) gave 8.9% on held-out PRs, so it doesn't transfer cleanly yet. Choosing it from out-of-fold predictions on dev would be the principled fix. v3 is **not shipped**: the gain isn't significant and its threshold isn't stable.
+
+What the combiner learned (standardised weights) is itself informative: *problem still present* (−0.65) and *only partially done* (−0.49) are the strongest signals, stronger than the broad *addressed* question (+0.36). Asking about the remaining problem works better than asking whether it was fixed.
